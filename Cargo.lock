@@ -456,6 +456,7 @@ dependencies = [
 name = "finder"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "glob",
  "grep",
  "ignore",
