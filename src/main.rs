@@ -69,18 +69,23 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn pipe_mode(
-    paths: impl Iterator<Item = PathBuf>,
-) -> Result<(), io::Error> {
+fn pipe_mode(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<(), io::Error> {
     use std::io::BufRead;
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
     let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
-    m.inject(paths.map(|p| p.to_string_lossy().into()));
 
-    // Read queries from stdin and respond
+    let inj = m.injector();
+    std::thread::spawn(move || {
+        for entry in paths {
+            inj.push(entry.to_string_lossy().into(), |e, cols| {
+                cols[0] = e.to_owned().into()
+            });
+        }
+    });
+
     for line in stdin.lock().lines() {
         let query = line?;
         m.find(&query);
@@ -96,17 +101,25 @@ fn pipe_mode(
     Ok(())
 }
 
-fn interactive(paths: impl Iterator<Item = PathBuf>) -> Result<(), io::Error> {
+fn interactive(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<(), io::Error> {
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let mut stderr = io::stderr();
+    execute!(stderr, EnterAlternateScreen, EnableMouseCapture)?;
 
     let mut query = String::new();
     let mut selected = 0;
-    let mut results = Vec::new();
+    let mut results: Vec<&String>;
 
     let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
-    m.inject(paths.map(|p| p.to_string_lossy().into()));
+
+    let inj = m.injector();
+    std::thread::spawn(move || {
+        for entry in paths {
+            inj.push(entry.to_string_lossy().into(), |e, cols| {
+                cols[0] = e.to_owned().into()
+            });
+        }
+    });
 
     loop {
         m.find(&query);
@@ -114,55 +127,57 @@ fn interactive(paths: impl Iterator<Item = PathBuf>) -> Result<(), io::Error> {
 
         results = m.results(50);
 
-        render_ui(&mut stdout, &query, results.as_slice(), selected)?;
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Char(c) => {
-                    query.push(c);
-                    selected = 0;
+        render_ui(&mut stderr, &query, results.as_slice(), selected)?;
+        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
                 }
-                KeyCode::Backspace => {
-                    query.pop();
-                    selected = 0;
-                }
-                KeyCode::Up => {
-                    if selected > 0 {
-                        selected -= 1;
-                    } else {
-                        selected = results.len().saturating_sub(1);
-                    }
-                }
-                KeyCode::Down => {
-                    if selected < results.len().saturating_sub(1) {
-                        selected += 1;
-                    } else {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        query.push(c);
                         selected = 0;
                     }
-                }
-                KeyCode::Enter => {
-                    disable_raw_mode()?;
-                    execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
-                    if let Some(item) = results.get(selected) {
-                        println!("{}", item);
-                        return Ok(());
+                    KeyCode::Backspace => {
+                        query.pop();
+                        selected = 0;
                     }
+                    KeyCode::Up => {
+                        if selected > 0 {
+                            selected -= 1;
+                        } else {
+                            selected = results.len().saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down => {
+                        if selected < results.len().saturating_sub(1) {
+                            selected += 1;
+                        } else {
+                            selected = 0;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        disable_raw_mode()?;
+                        execute!(stderr, LeaveAlternateScreen, DisableMouseCapture)?;
+                        if let Some(item) = results.get(selected) {
+                            println!("{}", item);
+                            return Ok(());
+                        }
+                    }
+                    KeyCode::Esc => break,
+                    _ => {}
                 }
-                KeyCode::Esc => break,
-                _ => {}
             }
         }
     }
     disable_raw_mode()?;
-    execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(stderr, LeaveAlternateScreen, DisableMouseCapture)?;
 
     Ok(())
 }
 
 fn render_ui(
-    stdout: &mut io::Stdout,
+    stdout: &mut io::Stderr,
     query: &str,
     results: &[&String],
     // results: &[nucleo::Item<String>],
@@ -177,20 +192,19 @@ fn render_ui(
         cursor::Show,
         style::Print(query),
         cursor::MoveTo(0, 1),
-        style::Print("-".repeat(50)),
-        cursor::MoveTo(0, 1)
     )?;
 
     for (i, item) in results.iter().enumerate() {
         execute!(
             stdout,
-            if i == selected {
-                style::SetBackgroundColor(style::Color::DarkGreen)
+            style::SetBackgroundColor(if i == selected {
+                style::Color::DarkGreen
             } else {
-                style::SetBackgroundColor(style::Color::Reset)
-            },
+                style::Color::Reset
+            }),
             style::Print(item),
-            cursor::MoveTo(0, 2 + i as u16)
+            style::ResetColor,
+            cursor::MoveTo(0, i as u16)
         )?;
     }
 
@@ -220,7 +234,7 @@ struct TraverseOpts {
     filter_all: bool,
 }
 
-fn traverse(dir: &str, opts: TraverseOpts) -> impl Iterator<Item = PathBuf> {
+fn traverse(dir: &str, opts: TraverseOpts) -> impl Iterator<Item = PathBuf> + Send + use<> {
     ignore::WalkBuilder::new(dir)
         .require_git(opts.require_git)
         .follow_links(opts.follow_symlinks)
@@ -230,12 +244,6 @@ fn traverse(dir: &str, opts: TraverseOpts) -> impl Iterator<Item = PathBuf> {
         .into_iter()
         .filter_map(|e| e.ok())
         .map(ignore::DirEntry::into_path)
-}
-
-fn picker(matcher: &mut Matcher, pattern: &str) {
-    matcher.find(pattern);
-    matcher.tick();
-    let res = matcher.results(100);
 }
 
 struct Matcher {
@@ -256,6 +264,10 @@ impl Matcher {
     fn tick(&mut self) {
         let status = self.inner.tick(10);
         self.running = status.running;
+    }
+
+    pub fn injector(&self) -> nucleo::Injector<String> {
+        self.inner.injector()
     }
 
     pub fn inject(&self, entries: impl Iterator<Item = String>) {
