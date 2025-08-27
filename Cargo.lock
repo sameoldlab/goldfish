@@ -243,16 +243,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "finder"
-version = "0.1.0"
-dependencies = [
- "clap",
- "crossterm",
- "ignore",
- "nucleo",
-]
-
-[[package]]
 name = "globset"
 version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -263,6 +253,16 @@ dependencies = [
  "log",
  "regex-automata",
  "regex-syntax",
+]
+
+[[package]]
+name = "goldfish"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crossterm",
+ "ignore",
+ "nucleo",
 ]
 
 [[package]]
