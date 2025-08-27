@@ -4,11 +4,13 @@ use crossterm::{
     execute, style,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ignore::WalkState;
 use nucleo::{
     Nucleo,
     pattern::{CaseMatching, Normalization},
 };
 use std::{
+    default,
     io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::Arc,
@@ -47,44 +49,51 @@ struct Cli {
 
 fn main() -> Result<(), io::Error> {
     let cli = Cli::parse();
-    let path = cli.path.as_deref().unwrap_or(".");
+    let path = cli.path.unwrap_or(".".to_string());
 
-    let paths = traverse(
-        &path,
-        TraverseOpts {
-            follow_symlinks: cli.follow_symlinks,
-            require_git: false,
-            filter_hidden: !cli.hidden,
-            filter_all: !cli.no_ignore,
-        },
-    );
+    let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
+    let inj = m.injector();
+    let cores = std::thread::available_parallelism().unwrap().get();
+
+    // std::thread::spawn(move || {
+    ignore::WalkBuilder::new(path)
+        .require_git(false)
+        .follow_links(cli.follow_symlinks)
+        .standard_filters(!cli.no_ignore)
+        .hidden(!cli.hidden)
+        .threads(cores)
+        .build_parallel()
+        .run(|| {
+            let inj = inj.clone();
+            Box::new(move |entry| {
+                let entry = match entry {
+                    Ok(e) => e.into_path(),
+                    Err(_) => return WalkState::Continue,
+                };
+                // println!("{}", &entry.to_str().unwrap());
+                inj.push(entry.to_string_lossy().into(), |e, cols| {
+                    cols[0] = e.to_owned().into()
+                });
+                WalkState::Continue
+            })
+        });
+    // });
 
     if let Some(pattern) = cli.pattern {
-        single_shot(paths, &pattern);
+        single_shot(&mut m, &pattern);
     } else if io::stdin().is_terminal() {
-        interactive(paths)?;
+        interactive(&mut m)?;
     } else {
-        pipe_mode(paths)?;
+        pipe_mode(&mut m)?;
     }
     Ok(())
 }
 
-fn pipe_mode(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<(), io::Error> {
+fn pipe_mode(m: &mut Matcher) -> Result<(), io::Error> {
     use std::io::BufRead;
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
-
-    let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
-
-    let inj = m.injector();
-    std::thread::spawn(move || {
-        for entry in paths {
-            inj.push(entry.to_string_lossy().into(), |e, cols| {
-                cols[0] = e.to_owned().into()
-            });
-        }
-    });
 
     for line in stdin.lock().lines() {
         let query = line?;
@@ -101,7 +110,7 @@ fn pipe_mode(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<()
     Ok(())
 }
 
-fn interactive(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<(), io::Error> {
+fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stderr = io::stderr();
     execute!(stderr, EnterAlternateScreen, EnableMouseCapture)?;
@@ -109,17 +118,6 @@ fn interactive(paths: impl Iterator<Item = PathBuf> + Send + 'static) -> Result<
     let mut query = String::new();
     let mut selected = 0;
     let mut results: Vec<&String>;
-
-    let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
-
-    let inj = m.injector();
-    std::thread::spawn(move || {
-        for entry in paths {
-            inj.push(entry.to_string_lossy().into(), |e, cols| {
-                cols[0] = e.to_owned().into()
-            });
-        }
-    });
 
     loop {
         m.find(&query);
@@ -214,9 +212,7 @@ fn render_ui(
     Ok(())
 }
 
-fn single_shot(paths: impl Iterator<Item = PathBuf>, pattern: &str) {
-    let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
-    m.inject(paths.map(|p| p.to_string_lossy().into()));
+fn single_shot(m: &mut Matcher, pattern: &str) {
     m.find(pattern);
     m.tick();
 
@@ -225,25 +221,6 @@ fn single_shot(paths: impl Iterator<Item = PathBuf>, pattern: &str) {
     for entry in results {
         writeln!(stdout, "{entry}").unwrap();
     }
-}
-
-struct TraverseOpts {
-    follow_symlinks: bool,
-    require_git: bool,
-    filter_hidden: bool,
-    filter_all: bool,
-}
-
-fn traverse(dir: &str, opts: TraverseOpts) -> impl Iterator<Item = PathBuf> + Send + use<> {
-    ignore::WalkBuilder::new(dir)
-        .require_git(opts.require_git)
-        .follow_links(opts.follow_symlinks)
-        .standard_filters(opts.filter_all)
-        .hidden(opts.filter_hidden)
-        .build()
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .map(ignore::DirEntry::into_path)
 }
 
 struct Matcher {
@@ -291,6 +268,7 @@ impl Matcher {
         );
         self.last_pattern = pattern.to_string();
     }
+
     fn results(&mut self, count: u32) -> Vec<&String> {
         let snapshot = self.inner.snapshot();
         // dbg!(&snapshot.matched_item_count());
