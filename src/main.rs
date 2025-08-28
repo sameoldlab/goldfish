@@ -81,26 +81,35 @@ fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
     let reader = io::BufReader::new(stdin);
 
     for line in reader.lines() {
-        let query = line?;
-        if query == "Exit" { break; }
-
-        m.find(&query);
-
-        // enter a loop checking for updates every 10 milliseconds 
-        // updates are only sent if there is a change.
-        // change and running flip at the same time to give a single result
-        loop {
-            let [changed, running] = m.tick();
-            if !changed { continue }
-
-            stdout.write(b"->")?;
-            for result in m.results(10) {
-                stdout.write(result.as_bytes())?;
+        let msg = line?;
+        if let Some(cmd) = msg.strip_prefix("c:") {
+            if cmd == "cmd:Exit" {
+                break;
             }
-            stdout.write(b"\n")?;
-            stdout.flush()?;
+        } else if let Some(query) = msg.strip_prefix("q:") {
+            m.find(&query);
 
-            if !running {break;}
+            // checks for updates every 10 milliseconds
+            // updates are sent only  if there is a change.
+            // change and running flip at the same time to give a single result
+            loop {
+                let [changed, running] = m.tick();
+                if !changed {
+                    continue;
+                }
+
+                let results = m.results(10);
+
+                stdout.write(&format!("{}\n", &results.len()).as_bytes())?;
+                for result in results {
+                    stdout.write(&[result.as_bytes(), b"\n"].concat())?;
+                }
+                stdout.flush()?;
+
+                if !running {
+                    break;
+                }
+            }
         }
     }
     Ok(())
