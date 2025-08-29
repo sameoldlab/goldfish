@@ -89,24 +89,17 @@ fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
         } else if let Some(query) = msg.strip_prefix("q:") {
             m.find(&query);
 
-            // checks for updates every 10 milliseconds
-            // updates are sent only  if there is a change.
-            // change and running flip at the same time to give a single result
             loop {
                 let [changed, running] = m.tick();
-                if !changed {
-                    continue;
-                }
-
-                let results = m.results(10);
-
-                stdout.write(&format!("{}\n", &results.len()).as_bytes())?;
-                for result in results {
-                    stdout.write(&[result.as_bytes(), b"\n"].concat())?;
-                }
-                stdout.flush()?;
 
                 if !running {
+                    if changed {
+                        for result in m.results(10) {
+                            stdout.write(result.as_bytes())?;
+                            stdout.write(b"\n")?;
+                        }
+                        stdout.flush()?;
+                    }
                     break;
                 }
             }
