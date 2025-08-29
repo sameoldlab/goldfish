@@ -83,7 +83,7 @@ fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
     for line in reader.lines() {
         let msg = line?;
         if let Some(cmd) = msg.strip_prefix("c:") {
-            if cmd == "cmd:Exit" {
+            if cmd == "Exit" {
                 break;
             }
         } else if let Some(query) = msg.strip_prefix("q:") {
