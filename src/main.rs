@@ -119,12 +119,8 @@ fn interactive(m: &mut Nucleo<String>) -> Result<(), io::Error> {
                 if !s.running || loop_time.elapsed().as_millis() > 900 as u128 {
                     if s.changed {
                         let snapshot = m.snapshot();
-                        let count = if 10 > snapshot.matched_item_count() {
-                            snapshot.matched_item_count()
-                        } else {
-                            10
-                        };
-                        for result in snapshot.matched_items(0..count) {
+                        let count = 10.min(snapshot.matched_item_count());
+                        for result in snapshot.matched_items(..count) {
                             stdout.write(result.data.as_bytes())?;
                             stdout.write(b"\n")?;
                         }
