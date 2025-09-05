@@ -5,8 +5,7 @@ use nucleo::{
     pattern::{CaseMatching, Normalization},
 };
 use std::{
-    io::{self, BufRead, Write},
-    sync::Arc,
+    io::{self, BufRead, Write}, sync::Arc, thread, time::Instant
 };
 
 #[derive(Parser)]
@@ -44,16 +43,21 @@ fn main() -> Result<(), io::Error> {
     let cli = Cli::parse();
     let path = cli.path.unwrap_or(".".to_string());
 
-    let mut m: Nucleo<String> =  Nucleo::new(nucleo::Config::DEFAULT.match_paths(), Arc::new(|| {}), None, 1);
+    let mut m: Nucleo<String> = Nucleo::new(
+        nucleo::Config::DEFAULT.match_paths(),
+        Arc::new(|| {}),
+        None,
+        1,
+    );
     let inj = Arc::new(m.injector());
 
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         ignore::WalkBuilder::new(path)
             .require_git(false)
             .follow_links(cli.follow_symlinks)
             .standard_filters(!cli.no_ignore)
             .hidden(!cli.hidden)
-            .threads(std::thread::available_parallelism().unwrap().get())
+            .threads(thread::available_parallelism().unwrap().get())
             .build_parallel()
             .run(|| {
                 let inj = inj.clone();
@@ -84,7 +88,7 @@ fn interactive(m: &mut Nucleo<String>) -> Result<(), io::Error> {
     for line in reader.lines() {
         let msg = line?;
         if let Some(cmd) = msg.strip_prefix("c:") {
-            match cmd  {
+            match cmd {
                 "Exit" => break,
                 _ => (),
             }
@@ -102,11 +106,11 @@ fn interactive(m: &mut Nucleo<String>) -> Result<(), io::Error> {
             );
             last_query = query.to_string();
 
-
-              loop {
+            let loop_time = Instant::now();
+            loop {
                 let s = m.tick(10);
 
-                if !s.running {
+                if !s.running || loop_time.elapsed().as_millis() > 900 as u128 {
                     if s.changed {
                         let snapshot = m.snapshot();
                         let count = if 10 > snapshot.matched_item_count() {
@@ -114,8 +118,7 @@ fn interactive(m: &mut Nucleo<String>) -> Result<(), io::Error> {
                         } else {
                             10
                         };
-
-                        for result in snapshot.matched_items(..count) {
+                        for result in snapshot.matched_items(0..count) {
                             stdout.write(result.data.as_bytes())?;
                             stdout.write(b"\n")?;
                         }
