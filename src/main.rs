@@ -44,7 +44,7 @@ fn main() -> Result<(), io::Error> {
     let cli = Cli::parse();
     let path = cli.path.unwrap_or(".".to_string());
 
-    let mut m = Matcher::new(nucleo::Config::DEFAULT.match_paths());
+    let mut m: Nucleo<String> =  Nucleo::new(nucleo::Config::DEFAULT.match_paths(), Arc::new(|| {}), None, 1);
     let inj = Arc::new(m.injector());
 
     std::thread::spawn(move || {
@@ -75,27 +75,48 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
+fn interactive(m: &mut Nucleo<String>) -> Result<(), io::Error> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let reader = io::BufReader::new(stdin);
+    let mut last_query = String::new();
 
     for line in reader.lines() {
         let msg = line?;
         if let Some(cmd) = msg.strip_prefix("c:") {
-            if cmd == "Exit" {
-                break;
+            match cmd  {
+                "Exit" => break,
+                _ => (),
             }
         } else if let Some(query) = msg.strip_prefix("q:") {
-            m.find(&query);
+            if query == last_query {
+                continue;
+            }
 
-            loop {
-                let [changed, running] = m.tick();
+            m.pattern.reparse(
+                0,
+                query,
+                CaseMatching::Smart,
+                Normalization::Smart,
+                query.starts_with(&last_query),
+            );
+            last_query = query.to_string();
 
-                if !running {
-                    if changed {
-                        for result in m.results(10) {
-                            stdout.write(result.as_bytes())?;
+
+              loop {
+                let s = m.tick(10);
+
+                if !s.running {
+                    if s.changed {
+                        let snapshot = m.snapshot();
+                        let count = if 10 > snapshot.matched_item_count() {
+                            snapshot.matched_item_count()
+                        } else {
+                            10
+                        };
+
+                        for result in snapshot.matched_items(..count) {
+                            stdout.write(result.data.as_bytes())?;
                             stdout.write(b"\n")?;
                         }
                         stdout.flush()?;
@@ -106,62 +127,4 @@ fn interactive(m: &mut Matcher) -> Result<(), io::Error> {
         }
     }
     Ok(())
-}
-
-struct Matcher {
-    inner: Nucleo<String>,
-    pub last_pattern: String,
-}
-
-impl Matcher {
-    pub fn new(config: nucleo::Config) -> Self {
-        let cols = 1;
-        Self {
-            inner: Nucleo::new(config, Arc::new(|| {}), None, cols),
-            last_pattern: String::new(),
-        }
-    }
-    fn tick(&mut self) -> [bool; 2] {
-        let status = self.inner.tick(10);
-        [status.changed, status.running]
-    }
-
-    pub fn injector(&self) -> nucleo::Injector<String> {
-        self.inner.injector()
-    }
-
-    pub fn find(&mut self, pattern: &str) {
-        if pattern == self.last_pattern {
-            return;
-        }
-
-        self.inner.pattern.reparse(
-            0,
-            pattern,
-            CaseMatching::Smart,
-            Normalization::Smart,
-            pattern.starts_with(&self.last_pattern),
-        );
-        self.last_pattern = pattern.to_string();
-    }
-
-    fn results(&mut self, count: u32) -> Vec<&String> {
-        let snapshot = self.inner.snapshot();
-        // dbg!(&snapshot.matched_item_count());
-
-        let count = if count > snapshot.matched_item_count() {
-            snapshot.matched_item_count()
-        } else {
-            count
-        };
-
-        let mut results = Vec::with_capacity(count as usize);
-
-        for entry in snapshot.matched_items(..count) {
-            // snapshot.pattern().column_pattern(0).indices(entry.matcher_columns[0].slice(..), matcher, Vec::new())
-            results.push(entry.data);
-        }
-
-        results
-    }
 }
