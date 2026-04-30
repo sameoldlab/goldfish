@@ -10,12 +10,21 @@ mod item;
 mod pipeline;
 mod source;
 
+use lexopt::Arg::{Long, Short, Value};
+use nucleo::{
+    Nucleo,
+    pattern::{CaseMatching, Normalization},
+};
 use std::{
     io::{self, BufRead, Write},
     path::PathBuf,
     sync::Arc,
     time::Instant,
 };
+
+use cache::open as cache_open;
+use item::{SearchItem, SearchTarget};
+use source::{WalkOptions, WalkSource};
 
 fn cache_path() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
@@ -26,46 +35,66 @@ fn cache_path() -> PathBuf {
         .join("index.db")
 }
 
-use clap::Parser;
-use nucleo::{
-    Nucleo,
-    pattern::{CaseMatching, Normalization},
-};
-
-use cache::open as cache_open;
-use item::{SearchItem, SearchTarget};
-use source::{WalkOptions, WalkSource};
-
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
 struct Cli {
-    /// Search pattern
-    #[arg(short = 'q', long = "query")]
-    pattern: Option<String>,
 
     /// Path to search (default: current directory)
-    path: Option<String>,
-
+    path: PathBuf,
     /// Case-insensitive matching
-    #[arg(short, long, default_value_t = false)]
     ignore_case: bool,
 
     /// Disable default ignore rules (.gitignore, target, node_modules)
-    #[arg(short = 'A', long, default_value_t = false)]
     no_ignore: bool,
 
     /// Include hidden files
-    #[arg(short = 'H', long, default_value_t = false)]
     hidden: bool,
 
     /// Follow symbolic links
-    #[arg(short = 'L', long = "follow", default_value_t = false)]
     follow_symlinks: bool,
 }
 
+fn parse_args() -> Result<Cli, lexopt::Error> {
+    let mut path = None;
+    let mut ignore_case = false;
+    let mut no_ignore = false;
+    let mut hidden = false;
+    let mut follow_symlinks = false;
+
+    let mut parser = lexopt::Parser::from_env();
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Short('i') | Long("ignore-case") => ignore_case = true,
+            Short('A') | Long("no-ignore") => no_ignore = true,
+            Short('H') | Long("hidden") => hidden = true,
+            Short('L') | Long("follow") => follow_symlinks = true,
+            Short('h') | Long("help") => {
+                print!(concat!(
+                    "Usage: fsearch [OPTIONS] [PATH]\n\n",
+                    "Options:\n",
+                    "  -i, --ignore-case  Case-insensitive matching\n",
+                    "  -A, --no-ignore    Disable .gitignore and default filters\n",
+                    "  -H, --hidden       Include hidden files\n",
+                    "  -L, --follow       Follow symbolic links\n",
+                    "  -h, --help         Print help\n",
+                ));
+                std::process::exit(0);
+            }
+            Value(v) if path.is_none() => path = Some(PathBuf::from(v)),
+            arg => return Err(arg.unexpected()),
+        }
+    }
+
+    Ok(Cli {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        ignore_case,
+        no_ignore,
+        hidden,
+        follow_symlinks,
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let root = PathBuf::from(cli.path.unwrap_or_else(|| ".".to_string()));
+    let cli = parse_args()?;
+    let root = cli.path;
 
     let column_count = 2u32;
     let case = if cli.ignore_case {
@@ -108,10 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn interactive(
-    nucleo: &mut Nucleo<SearchItem>,
-    case: CaseMatching,
-) -> Result<(), io::Error> {
+fn interactive(nucleo: &mut Nucleo<SearchItem>, case: CaseMatching) -> Result<(), io::Error> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut last_query = String::new();
