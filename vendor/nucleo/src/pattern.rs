@@ -15,12 +15,14 @@ pub(crate) enum Status {
 #[derive(Debug)]
 pub struct MultiPattern {
     cols: Vec<(Pattern, Status)>,
+    weights: Vec<u32>,
 }
 
 impl Clone for MultiPattern {
     fn clone(&self) -> Self {
         Self {
             cols: self.cols.clone(),
+            weights: self.weights.clone(),
         }
     }
 
@@ -34,6 +36,7 @@ impl MultiPattern {
     pub fn new(columns: usize) -> Self {
         Self {
             cols: vec![Default::default(); columns],
+            weights: vec![1; columns],
         }
     }
 
@@ -84,12 +87,16 @@ impl MultiPattern {
             *status = Status::Unchanged
         }
     }
+    pub fn set_weight(&mut self, column: usize, weight: u32) {
+        self.weights[column] = weight
+    }
 
     pub fn score(&self, haystack: &[Utf32String], matcher: &mut Matcher) -> Option<u32> {
-        // TODO: wheight columns?
         let mut score = 0;
-        for ((pattern, _), haystack) in self.cols.iter().zip(haystack) {
-            score += pattern.score(haystack.slice(..), matcher)?
+        for (i, ((pattern, _), haystack)) in self.cols.iter().zip(haystack).enumerate() {
+            let weight = *self.weights.get(i).unwrap_or(&1);
+
+            score += pattern.score(haystack.slice(..), matcher)? * weight / 100
         }
         Some(score)
     }
