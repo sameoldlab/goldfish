@@ -19,10 +19,4 @@ pub enum CacheError {
 pub enum PipelineError {
     #[error("cache error: {0}")]
     Cache(#[from] CacheError),
-
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("sqlite error")]
-    Sqlite(#[from] rusqlite::Error)
 }

@@ -48,16 +48,13 @@ pub fn open(path: &Path) -> Result<(CacheWriter, CacheReaderFactory), CacheError
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS cache (
-            path        TEXT    PRIMARY KEY,
+            path        BLOB    PRIMARY KEY,
             mtime       INTEGER NOT NULL,
             size        INTEGER NOT NULL,
             item_type   TEXT    NOT NULL,
             data        BLOB    NOT NULL,
             indexed_at  INTEGER NOT NULL
-        ) STRICT;
-
-        CREATE INDEX IF NOT EXISTS idx_type  ON cache(item_type);
-        CREATE INDEX IF NOT EXISTS idx_mtime ON cache(mtime);",
+        ) STRICT;",
     )?;
 
     Ok((
@@ -99,7 +96,7 @@ impl CacheWriter {
             "INSERT OR REPLACE INTO cache (path, mtime, size, item_type, data, indexed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                path.to_str().unwrap_or(""),
+                path.as_os_str().as_encoded_bytes(),
                 mtime,
                 size,
                 item.type_name(),
@@ -131,7 +128,7 @@ pub fn lookup(
 ) -> Option<SearchItem> {
     conn.query_row(
         "SELECT data FROM cache WHERE path=?1 AND mtime=?2 AND size=?3",
-        params![path.to_str()?, mtime, size],
+        params![path.as_os_str().as_encoded_bytes(), mtime, size],
         |row| row.get::<_, Vec<u8>>(0),
     )
     .ok()

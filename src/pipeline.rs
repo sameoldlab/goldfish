@@ -81,8 +81,8 @@ pub fn run(
 
                     injector.push(item, move |it, cols| {
                         let keys = it.match_keys();
-                        for (col, key) in cols.iter_mut().zip(keys.iter()) {
-                            *col = (*key).to_owned().into();
+                        for i in 0..it.column_count() {
+                            cols[i] = keys[i].into();
                         }
                     });
                 }

@@ -6,13 +6,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Maximum columns any SearchItem variant can use.
+/// Keep this in sync with the Nucleo column count in main.rs.
+pub const MAX_COLUMNS: usize = 2;
+
 /// The trait nucleo uses to get match keys and display strings.
 /// Multiple keys per item allow matching on filename, content,
 /// and metadata without separate search passes.
 pub trait SearchTarget: Send + Sync + 'static {
-    /// All strings nucleo should match against.
-    /// Column count in Nucleo must equal the maximum vec length returned here.
-    fn match_keys(&self) -> Vec<&str>;
+    /// How many of the columns from match_keys() are valid for this item.
+    fn column_count(&self) -> usize;
+
+    /// All strings nucleo should match against, padded to MAX_COLUMNS.
+    /// Returns a stack array — no heap allocation.
+    fn match_keys(&self) -> [&str; MAX_COLUMNS];
 
     /// Human-readable string for output.
     fn display(&self) -> &str;
@@ -36,7 +43,7 @@ impl FileItem {
     pub fn from_path(path: &std::path::Path) -> Self {
         let path_str = path.to_string_lossy().into_owned();
         let stem = path
-            .file_name()
+            .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         Self { path: path_str, stem }
@@ -54,9 +61,15 @@ pub enum SearchItem {
 }
 
 impl SearchTarget for SearchItem {
-    fn match_keys(&self) -> Vec<&str> {
+    fn column_count(&self) -> usize {
         match self {
-            SearchItem::File(f) => vec![f.path.as_str(), f.stem.as_str()],
+            SearchItem::File(_) => 2,
+        }
+    }
+
+    fn match_keys(&self) -> [&str; MAX_COLUMNS] {
+        match self {
+            SearchItem::File(f) => [f.path.as_str(), f.stem.as_str()],
         }
     }
 

@@ -17,6 +17,15 @@ use std::{
     time::Instant,
 };
 
+fn cache_path() -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("goldfish")
+        .join("index.db")
+}
+
 use clap::Parser;
 use nucleo::{
     Nucleo,
@@ -74,7 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let injector = Arc::new(nucleo.injector());
 
-    let db_path = root.join(".fsearch.db");
+    let db_path = cache_path();
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let (writer, reader_factory) = cache_open(&db_path)?;
 
     let source = WalkSource {
