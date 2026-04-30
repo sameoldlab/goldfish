@@ -4,19 +4,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    thread,
-    time::Instant,
-};
+use std::{fs, path::PathBuf, sync::Arc, thread, time::Instant};
 
 use crossbeam_channel::{bounded, unbounded};
 use nucleo::Injector;
 
 use crate::{
-    cache::{mtime_secs, lookup, CacheReaderFactory, CacheWriter},
+    cache::{CacheReaderFactory, CacheWriter, lookup, mtime_secs},
     error::PipelineError,
     item::{FileItem, SearchItem, SearchTarget},
     source::WalkSource,

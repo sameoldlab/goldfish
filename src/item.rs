@@ -46,7 +46,10 @@ impl FileItem {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        Self { path: path_str, stem }
+        Self {
+            path: path_str,
+            stem,
+        }
     }
 }
 

@@ -59,7 +59,9 @@ pub fn open(path: &Path) -> Result<(CacheWriter, CacheReaderFactory), CacheError
 
     Ok((
         CacheWriter { conn },
-        CacheReaderFactory { db_path: Arc::new(path.to_owned()) },
+        CacheReaderFactory {
+            db_path: Arc::new(path.to_owned()),
+        },
     ))
 }
 
@@ -120,12 +122,7 @@ impl CacheReaderFactory {
     }
 }
 
-pub fn lookup(
-    conn: &Connection,
-    path: &Path,
-    mtime: u64,
-    size: u64,
-) -> Option<SearchItem> {
+pub fn lookup(conn: &Connection, path: &Path, mtime: u64, size: u64) -> Option<SearchItem> {
     conn.query_row(
         "SELECT data FROM cache WHERE path=?1 AND mtime=?2 AND size=?3",
         params![path.as_os_str().as_encoded_bytes(), mtime, size],
